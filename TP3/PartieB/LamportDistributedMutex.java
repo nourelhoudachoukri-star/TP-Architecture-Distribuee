@@ -11,6 +11,8 @@ public class LamportDistributedMutex {
     // Canal réseau simulé (messages envoyés avec délai)
     static class CanalReseau {
         private final Random random = new Random();
+        // Probabilité qu'un message soit perdu (0.0 = aucune perte, 0.1 = 10 %)
+        private static final double PROBA_PERTE = 0.1;
         private final AtomicInteger compteurMessages = new AtomicInteger(0);
         // Un "tuyau" par couple (source -> destination) pour garder l'ordre FIFO
         private final Map<String, ExecutorService> tuyaux = new ConcurrentHashMap<>();
@@ -18,6 +20,11 @@ public class LamportDistributedMutex {
         // Envoi d'un message avec délai simulé
         public void envoyerMessage(Processus src, Processus dest, Message msg) {
             compteurMessages.incrementAndGet(); // Incrémenter le compteur global
+            // Simulation de perte de message
+            if (random.nextDouble() < PROBA_PERTE) {
+                System.out.println("    xxx Message " + msg.type + " de P" + src.id + " vers P" + dest.id + " PERDU");
+                return;
+            }
             int delai = 300 + random.nextInt(500); // Délai aléatoire entre 300 et 800 ms
             ExecutorService tuyau = tuyaux.computeIfAbsent(src.id + "->" + dest.id,
                     k -> Executors.newSingleThreadExecutor());
