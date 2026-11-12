@@ -6,10 +6,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class LamportDistributedMutex {
-    // Nombre total de processus simulés
-    private static final int NB_PROCESSUS = 3;
+    // Nombre de processus testés pour le graphe (question 4)
+    private static final int[] NB_PROCESSUS_TESTES = {2, 3, 4, 5, 6};
+    // Nombre de passages en SC par processus
+    static final int NB_PASSAGES = 2;
     // Probabilité qu'un processus tombe en panne après chaque passage en SC
-    static final double PROBA_PANNE = 0.2;
+    // (0.0 pour la question 4 : on mesure seulement le coût en messages)
+    static final double PROBA_PANNE = 0.0;
     // Compteur du nombre total d'entrées en section critique
     static final AtomicInteger nbEntreesSC = new AtomicInteger(0);
     // Temps d'attente total (ms) avant d'entrer en SC
@@ -46,6 +49,11 @@ public class LamportDistributedMutex {
 
         public int getNombreMessages() {
             return compteurMessages.get();
+        }
+
+        // Arrête les threads du canal à la fin d'une simulation
+        public void arreter() {
+            for (ExecutorService tuyau : tuyaux.values()) tuyau.shutdownNow();
         }
     }
 
@@ -202,7 +210,7 @@ public class LamportDistributedMutex {
         public void run() {
             try {
                 Random random = new Random();
-                while (!enPanne) {
+                for (int i = 0; i < NB_PASSAGES && !enPanne; i++) {
                     demanderSectionCritique();
                     // Panne aléatoire selon PROBA_PANNE
                     if (random.nextDouble() < PROBA_PANNE) {
@@ -210,46 +218,67 @@ public class LamportDistributedMutex {
                         setEnPanne(true);
                         break;
                     }
-                    Thread.sleep(2000);
+                    Thread.sleep(500);
                 }
             } catch (InterruptedException ignored) {
             }
         }
     }
 
-    // ---------- MAIN ----------
-    public static void main(String[] args) throws InterruptedException {
+    // Lance une simulation avec n processus et renvoie le nombre de messages échangés
+    static int simuler(int n) throws InterruptedException {
+        nbEntreesSC.set(0);
+        tempsAttenteTotal.set(0);
         CanalReseau canal = new CanalReseau();
 
         // Création des processus
-        Processus p1 = new Processus(1, canal);
-        Processus p2 = new Processus(2, canal);
-        Processus p3 = new Processus(3, canal);
+        List<Processus> tous = new ArrayList<>();
+        for (int i = 1; i <= n; i++) tous.add(new Processus(i, canal));
 
         // Configuration du réseau (chaque processus connaît les AUTRES, sans lui-même)
-        List<Processus> tous = Arrays.asList(p1, p2, p3);
         for (Processus p : tous) {
             p.autres = new ArrayList<>(tous);
             p.autres.remove(p);
         }
 
-        // Démarrage des threads
-        new Thread(p1).start();
-        new Thread(p2).start();
-        new Thread(p3).start();
+        // Démarrage des threads et attente de la fin
+        List<Thread> threads = new ArrayList<>();
+        for (Processus p : tous) {
+            Thread t = new Thread(p);
+            threads.add(t);
+            t.start();
+        }
+        for (Thread t : threads) t.join();
+        Thread.sleep(1000); // laisser arriver les derniers messages
+        canal.arreter();
 
-        // Laisser tourner la simulation
-        Thread.sleep(18000);
-        System.out.println("\n===== STATISTIQUES =====");
-        System.out.println("Probabilité de panne : " + PROBA_PANNE);
+        System.out.println("\n===== STATISTIQUES (N = " + n + ") =====");
         System.out.println("Nombre total de messages échangés : " + canal.getNombreMessages());
         System.out.println("Nombre d'entrées en SC : " + nbEntreesSC.get());
         if (nbEntreesSC.get() > 0)
             System.out.println("Temps moyen d'attente pour entrer en SC : "
                     + (tempsAttenteTotal.get() / nbEntreesSC.get()) + " ms");
-        long pannes = tous.stream().filter(p -> p.enPanne).count();
-        System.out.println("Processus en panne : " + pannes + " / " + tous.size());
-        System.out.println("=========================");
+        System.out.println("=========================\n");
+        return canal.getNombreMessages();
+    }
+
+    // ---------- MAIN ----------
+    public static void main(String[] args) throws InterruptedException {
+        int[] resultats = new int[NB_PROCESSUS_TESTES.length];
+        for (int i = 0; i < NB_PROCESSUS_TESTES.length; i++) {
+            System.out.println("########## Simulation avec " + NB_PROCESSUS_TESTES[i] + " processus ##########");
+            resultats[i] = simuler(NB_PROCESSUS_TESTES[i]);
+        }
+
+        // Tableau récapitulatif + graphe en barres dans la console
+        System.out.println("===== MESSAGES SELON LE NOMBRE DE PROCESSUS =====");
+        System.out.println("N  | Messages | Théorie 3(N-1) x N x " + NB_PASSAGES + " | Graphe");
+        for (int i = 0; i < NB_PROCESSUS_TESTES.length; i++) {
+            int n = NB_PROCESSUS_TESTES[i];
+            int theorie = 3 * (n - 1) * n * NB_PASSAGES;
+            String barre = "#".repeat(resultats[i] / 4);
+            System.out.printf("%-2d | %-8d | %-26d | %s%n", n, resultats[i], theorie, barre);
+        }
         System.exit(0); // arrêter tous les threads
     }
 }
